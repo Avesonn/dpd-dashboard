@@ -72,75 +72,127 @@ mapovani_sluzeb = {
 st.set_page_config(page_title="DPD Routing Dashboard", layout="wide", page_icon="🚚")
 st.title("📦 DPD Routing Dashboard")
 
+# --- FTP SPOJENÍ ---
+FTP_CREDENTIALS = {"HOST": "ftp-routing.dpd.cz", "USER": "custrouting", "PASS": "65-K12_x-1"}
+
 @st.cache_data(ttl=600)
-def stahni_data_z_ftp():
-    HOST, USER, PASS = "ftp-routing.dpd.cz", "custrouting", "65-K12_x-1"
+def ziskej_seznam_souboru():
     try:
-        ftp = ftplib.FTP(HOST)
-        ftp.login(USER, PASS)
+        ftp = ftplib.FTP(FTP_CREDENTIALS["HOST"])
+        ftp.login(FTP_CREDENTIALS["USER"], FTP_CREDENTIALS["PASS"])
         seznam = ftp.nlst()
-        
         nejnovejsi = {}
         for s in seznam:
             if s.upper().startswith("ROUTING_"):
                 parts = s.split('_')
                 if len(parts) >= 3:
-                    # Klíč je CZ_AD nebo CZ_SK
                     stat_key = f"{parts[1]}_{parts[2]}"
                     if stat_key not in nejnovejsi or s > nejnovejsi[stat_key]:
                         nejnovejsi[stat_key] = s
-        
-        vysledky = []
-        for stat_key, soubor in sorted(nejnovejsi.items()):
-            try:
-                buffer = io.BytesIO()
-                ftp.retrbinary(f"RETR {soubor}", buffer.write)
-                buffer.seek(0)
-                df = pd.read_csv(buffer, sep='|', comment='#', header=None, on_bad_lines='skip', low_memory=False)
-                
-                if not df.empty and df.shape[1] >= 6:
-                    kody = df[5].dropna().unique()
-                    nazvy = sorted(list(set([mapovani_sluzeb.get(str(int(float(str(k).strip()))), f"Kód {k}") for k in kody if str(k).strip().replace('.','').isdigit()])))
-                    
-                    # OPRAVA LOGIKY STÁTU: Vezmeme tu část, která NENÍ "CZ"
-                    p = stat_key.split('_')
-                    kod_pro_preklad = p[1] if p[0] == "CZ" and len(p) > 1 else p[0]
-                    if kod_pro_preklad == "CZ" and len(p) > 1: kod_pro_preklad = p[1]
-                    
-                    plny_nazev = nazvy_statu.get(kod_pro_preklad.upper(), kod_pro_preklad)
-                    
-                    vysledky.append({"stat": plny_nazev, "soubor": soubor, "sluzby": nazvy})
-            except: continue
         ftp.quit()
-        return vysledky, None
+        return nejnovejsi, None
     except Exception as e: return None, str(e)
 
-st.info("🔄 Aktualizuji přehled z DPD serveru...")
-data, chyba = stahni_data_z_ftp()
+@st.cache_data(ttl=600)
+def nacti_df(soubor):
+    try:
+        ftp = ftplib.FTP(FTP_CREDENTIALS["HOST"])
+        ftp.login(FTP_CREDENTIALS["USER"], FTP_CREDENTIALS["PASS"])
+        buffer = io.BytesIO()
+        ftp.retrbinary(f"RETR {soubor}", buffer.write)
+        ftp.quit()
+        buffer.seek(0)
+        return pd.read_csv(buffer, sep='|', comment='#', header=None, on_bad_lines='skip', low_memory=False)
+    except: return None
 
-if chyba: st.error(f"❌ Chyba: {chyba}")
-elif not data: st.warning("⚠️ Žádná data.")
+# --- START ---
+seznam_souboru, chyba = ziskej_seznam_souboru()
+
+if chyba:
+    st.error(f"❌ Chyba připojení k FTP: {chyba}")
 else:
-    # Přidání vyhledávání
-    search = st.text_input("🔍 Vyhledat stát (např. Belgie nebo BE):")
-    
-    filtered_data = [d for d in data if search.lower() in d['stat'].lower() or search.upper() in d['soubor']]
-    
-    st.success(f"✅ Načteno {len(filtered_data)} destinací.")
-    
-    for i in range(0, len(filtered_data), 4):
-        cols = st.columns(4)
-        for j in range(4):
-            if i + j < len(filtered_data):
-                item = filtered_data[i+j]
-                with cols[j]:
-                    with st.container(border=True):
-                        st.subheader(f"🌍 {item['stat']}")
-                        st.caption(f"Soubor: {item['soubor']}")
-                        for s in item['sluzby']:
-                            if "COD" in s: st.write(f"💰 **{s}**")
-                            else: st.write(f"🔹 {s}")
+    # --- SEKCE 1: VYHLEDÁVAČ PSČ ---
+    st.header("🔎 1. Ověření dostupnosti podle PSČ")
+    with st.container(border=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            seznam_statu = sorted([(k.split('_')[1], nazvy_statu.get(k.split('_')[1], k)) for k in seznam_souboru.keys()], key=lambda x: x[1])
+            vybrany_stat = st.selectbox("Vyber cílový stát:", seznam_statu, format_func=lambda x: x[1])
+        with c2:
+            hledane_psc = st.text_input("Zadej PSČ (bez mezer):", placeholder="např. 11000").replace(" ", "")
 
-if st.sidebar.button('🔄 Obnovit data'):
+        if hledane_psc:
+            soubor = seznam_souboru.get(f"CZ_{vybrany_stat[0]}")
+            if soubor:
+                df = nacti_df(soubor)
+                if df is not None:
+                    # Porovnání PSČ jako řetězců (funguje pro čísla i písmena)
+                    match = df[(df[1].astype(str) <= hledane_psc) & (df[2].astype(str) >= hledane_psc)]
+                    if not match.empty:
+                        kody = match[5].dropna().unique()
+                        st.success(f"Pro PSČ **{hledane_psc}** v zemi **{vybrany_stat[1]}** jsou dostupné tyto služby:")
+                        cols = st.columns(4)
+                        for idx, k in enumerate(kody):
+                            k_str = str(int(float(str(k).strip())))
+                            nazev = mapovani_sluzeb.get(k_str, f"Kód {k_str}")
+                            with cols[idx % 4]:
+                                st.info(f"**{nazev}**")
+                    else:
+                        st.warning("⚠️ Pro toto PSČ nebyly nalezeny žádné specifické služby.")
+            else:
+                st.error("Soubor pro tento stát nebyl nalezen.")
+
+    st.markdown("---")
+
+    # --- SEKCE 2: FILTR PRO SEZNAM ---
+    st.header("📋 2. Filtr a přehled všech států")
+    search_query = st.text_input("Napiš název státu pro odfiltrování karet (např. 'Rakousko'):")
+
+    # --- SEKCE 3: KARTY (PŮVODNÍ ZOBRAZENÍ) ---
+    st.write("### 🌍 Kompletní seznam služeb")
+    
+    # Příprava dat pro karty (filtrovaná podle search_query)
+    vysledky_karty = []
+    
+    # Vytvoříme seznam klíčů, které odpovídají hledání
+    filtr_klicu = []
+    for klic, soubor in seznam_souboru.items():
+        kod_zeme = klic.split('_')[1]
+        nazev_zeme = nazvy_statu.get(kod_zeme, kod_zeme)
+        if search_query.lower() in nazev_zeme.lower() or search_query.upper() in kod_zeme:
+            filtr_klicu.append((klic, soubor, nazev_zeme))
+
+    if not filtr_klicu:
+        st.info("Žádný stát neodpovídá vašemu hledání.")
+    else:
+        # Progress bar pro načítání karet (protože jich je hodně)
+        progress_text = "Načítám detaily služeb z FTP..."
+        bar = st.progress(0, text=progress_text)
+        
+        for idx, (klic, soubor, nazev) in enumerate(filtr_klicu):
+            df = nacti_df(soubor)
+            if df is not None:
+                kody = df[5].dropna().unique()
+                sluzby = sorted(list(set([mapovani_sluzeb.get(str(int(float(str(k).strip()))), f"Kód {k}") for k in kody if str(k).strip().replace('.','').isdigit()])))
+                vysledky_karty.append({"stat": nazev, "soubor": soubor, "sluzby": sluzby})
+            bar.progress((idx + 1) / len(filtr_klicu), text=f"Načítám {nazev}...")
+        
+        bar.empty() # Schováme progress bar po dokončení
+
+        # Vykreslení karet ve 4 sloupcích
+        for i in range(0, len(vysledky_karty), 4):
+            cols = st.columns(4)
+            for j in range(4):
+                if i + j < len(vysledky_karty):
+                    item = vysledky_karty[i+j]
+                    with cols[j]:
+                        with st.container(border=True):
+                            st.subheader(f"{item['stat']}")
+                            st.caption(f"📄 {item['soubor']}")
+                            for s in item['sluzby']:
+                                if "COD" in s: st.write(f"💰 **{s}**")
+                                else: st.write(f"🔹 {s}")
+
+if st.sidebar.button('🔄 Obnovit data z FTP'):
     st.cache_data.clear()
     st.rerun()
