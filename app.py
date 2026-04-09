@@ -74,8 +74,8 @@ mapovani_sluzeb = {
 st.set_page_config(page_title="DPD Routing Dashboard", layout="wide", page_icon="🚚")
 st.title("📦 DPD Routing Dashboard")
 
-# --- FTP SPOJENÍ ---
-@st.cache_data(ttl=600)
+# --- FTP SPOJENÍ (Paměť nastavena na 12 hodin: ttl=43200) ---
+@st.cache_data(ttl=43200)
 def ziskej_seznam_souboru():
     try:
         ftp = ftplib.FTP("ftp-routing.dpd.cz")
@@ -93,7 +93,7 @@ def ziskej_seznam_souboru():
         return nejnovejsi, None
     except Exception as e: return None, str(e)
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=43200)
 def nacti_df(soubor):
     try:
         ftp = ftplib.FTP("ftp-routing.dpd.cz")
@@ -106,7 +106,9 @@ def nacti_df(soubor):
     except: return None
 
 # --- HLAVNÍ KÓD ---
-seznam_souboru, chyba = ziskej_seznam_souboru()
+# Animace načítání, kdyby náhodou FTP připojení trvalo déle
+with st.spinner('Připojuji se k DPD serveru a kontroluji data...'):
+    seznam_souboru, chyba = ziskej_seznam_souboru()
 
 if chyba:
     st.error(f"❌ Chyba připojení k FTP: {chyba}")
@@ -124,7 +126,10 @@ else:
         if vstup_psc:
             soubor = seznam_souboru.get(f"CZ_{vybrany_stat[0]}")
             if soubor:
-                df = nacti_df(soubor)
+                # Malý spinner i u stahování jednoho souboru, pokud není v paměti
+                with st.spinner(f'Načítám směrovací pravidla pro zemi {vybrany_stat[1]}...'):
+                    df = nacti_df(soubor)
+                    
                 if df is not None:
                     try:
                         if vstup_psc.isdigit():
@@ -155,19 +160,34 @@ else:
             if search_query.lower() in nazev_zeme.lower() or search_query.upper() in kod_zeme:
                 filtr_klicu.append((klic, soubor, nazev_zeme))
         
-        # Abecední řazení výsledků pro karty
         filtr_klicu = sorted(filtr_klicu, key=lambda x: x[2])
 
         if filtr_klicu:
             vysledky_karty = []
-            with st.status("Načítám přehled...", expanded=False) as status:
-                for idx, (klic, soubor, nazev) in enumerate(filtr_klicu):
-                    df_karta = nacti_df(soubor)
-                    if df_karta is not None:
-                        kody = df_karta[5].dropna().unique()
-                        sluzby = sorted(list(set([mapovani_sluzeb.get(str(int(float(str(k).strip()))), f"Kód {k}") for k in kody if str(k).strip().replace('.','').isdigit()])))
-                        vysledky_karty.append({"stat": nazev, "sluzby": sluzby})
-                status.update(label="Načteno!", state="complete")
+            celkem_klicu = len(filtr_klicu)
+            
+            # --- UKAZATEL PRŮBĚHU (PROGRESS BAR) ---
+            text_prubehu = st.empty() # Místo pro text
+            bar_prubehu = st.empty()  # Místo pro lištu
+            
+            for idx, (klic, soubor, nazev) in enumerate(filtr_klicu):
+                # Vypočítáme procenta
+                procenta = int(((idx + 1) / celkem_klicu) * 100)
+                
+                # Zobrazíme text a posuneme lištu
+                text_prubehu.markdown(f"**Stahuji data pro:** {nazev} ({idx + 1}/{celkem_klicu})")
+                bar_prubehu.progress(procenta)
+                
+                df_karta = nacti_df(soubor)
+                if df_karta is not None:
+                    kody = df_karta[5].dropna().unique()
+                    sluzby = sorted(list(set([mapovani_sluzeb.get(str(int(float(str(k).strip()))), f"Kód {k}") for k in kody if str(k).strip().replace('.','').isdigit()])))
+                    vysledky_karty.append({"stat": nazev, "sluzby": sluzby})
+            
+            # Jakmile je hotovo, schováme ukazatele a ukážeme úspěch
+            text_prubehu.empty()
+            bar_prubehu.empty()
+            st.success("✅ Všechna data úspěšně načtena!")
 
             for i in range(0, len(vysledky_karty), 4):
                 cols = st.columns(4)
@@ -181,6 +201,6 @@ else:
                                     if "COD" in s: st.write(f"💰 **{s}**")
                                     else: st.write(f"🔹 {s}")
 
-if st.sidebar.button('🔄 Obnovit data z FTP'):
+if st.sidebar.button('🔄 Vynutit obnovení dat z FTP'):
     st.cache_data.clear()
     st.rerun()
