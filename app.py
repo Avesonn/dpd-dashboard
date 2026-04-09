@@ -3,7 +3,7 @@ import pandas as pd
 import ftplib
 import io
 
-# --- SLOVNÍKY ---
+# --- KOMPLETNÍ SLOVNÍK STÁTŮ ---
 nazvy_statu = {
     "AF": "Afghánistán", "AX": "Alandy", "AL": "Albánie", "DZ": "Alžírsko", "AS": "Americká Samoa",
     "VI": "Americké Panenské Ostrovy", "AD": "Andorra", "AO": "Angola", "AI": "Anguilla", "AQ": "Antarktida",
@@ -56,39 +56,19 @@ nazvy_statu = {
     "TL": "Východní Timor", "WF": "Wallis a Futuna", "ZM": "Zambie", "ZW": "Zimbabwe"
 }
 
-# --- AKTUALIZOVANÝ SLOVNÍK SLUŽEB ---
+# --- SLOVNÍK SLUŽEB ---
 mapovani_sluzeb = {
-    "101": "Classic", 
-    "109": "Classic + COD", 
-    "113": "Výměna",
-    "155": "DPD 18:00 / Guarantee", 
-    "161": "DPD 18:00 dobírka", 
-    "164": "DPD 18:00 výměna",
-    "179": "DPD 10:00", 
-    "191": "DPD 10:00 dobírka", 
-    "197": "DPD 10:00 výměna",
-    "225": "DPD 12:00", 
-    "237": "DPD 12:00 dobírka", 
-    "243": "DPD 12:00 výměna",
-    "302": "DPD EXPRESS", 
-    "327": "Private", 
-    "329": "Private + COD", 
-    "332": "DPD RETURN", 
-    "337": "DPD ParcelShop", 
-    "341": "DPD ParcelShop dobírka", 
-    "345": "SHOP2SHOP / PickupPoint", 
-    "365": "PNEU", 
-    "367": "PNEU dobírka", 
-    "404": "SHOP2HOME", 
-    "415": "Dedicated Direct Truck Load", 
-    "571": "Private výměna (legacy)", 
-    "572": "Private dobírka výměna (legacy)",
-    "827": "Private výměna",
-    "829": "Private sobotní doručení",
-    "831": "Private sobotní doručení + COD",
-    "835": "Private výměna + COD",
-    "839": "Private večerní doručení",
-    "841": "Private večerní doručení + COD"
+    "101": "Classic", "109": "Classic + COD", "113": "Výměna",
+    "155": "DPD 18:00 / Guarantee", "161": "DPD 18:00 dobírka", "164": "DPD 18:00 výměna",
+    "179": "DPD 10:00", "191": "DPD 10:00 dobírka", "197": "DPD 10:00 výměna",
+    "225": "DPD 12:00", "237": "DPD 12:00 dobírka", "243": "DPD 12:00 výměna",
+    "302": "DPD EXPRESS", "327": "Private", "329": "Private + COD", 
+    "332": "DPD RETURN", "337": "DPD ParcelShop", "341": "DPD ParcelShop dobírka", 
+    "345": "SHOP2SHOP / PickupPoint", "365": "PNEU", "367": "PNEU dobírka", 
+    "404": "SHOP2HOME", "415": "Dedicated Direct Truck Load", 
+    "571": "Private výměna (legacy)", "572": "Private dobírka výměna (legacy)",
+    "827": "Private výměna", "829": "Private sobotní doručení", "831": "Private sobotní doručení + COD",
+    "835": "Private výměna + COD", "839": "Private večerní doručení", "841": "Private večerní doručení + COD"
 }
 
 st.set_page_config(page_title="DPD Routing Dashboard", layout="wide", page_icon="🚚")
@@ -125,15 +105,14 @@ def nacti_df(soubor):
         return pd.read_csv(buffer, sep='|', comment='#', header=None, on_bad_lines='skip', low_memory=False)
     except: return None
 
-# --- START ---
+# --- HLAVNÍ KÓD ---
 seznam_souboru, chyba = ziskej_seznam_souboru()
 
 if chyba:
     st.error(f"❌ Chyba připojení k FTP: {chyba}")
 else:
-    # --- SEKCE 1: VYHLEDÁVAČ PSČ ---
-    st.header("🔎 1. Ověření dostupnosti podle PSČ")
-    with st.container(border=True):
+    # --- SEKCE 1: VYHLEDÁVAČ PSČ (V EXPANDERU) ---
+    with st.expander("🔎 1. Ověření dostupnosti podle PSČ", expanded=True):
         c1, c2 = st.columns(2)
         with c1:
             seznam_statu = sorted([(k.split('_')[1], nazvy_statu.get(k.split('_')[1], k)) for k in seznam_souboru.keys()], key=lambda x: x[1])
@@ -149,13 +128,10 @@ else:
                 if df is not None:
                     try:
                         if vstup_psc.isdigit():
-                            vstup_num = float(vstup_psc)
-                            zip_from_num = pd.to_numeric(df[3], errors='coerce')
-                            zip_to_num = pd.to_numeric(df[4], errors='coerce')
+                            vstup_num = float(vstup_psc); zip_from_num = pd.to_numeric(df[3], errors='coerce'); zip_to_num = pd.to_numeric(df[4], errors='coerce')
                             match = df[(zip_from_num <= vstup_num) & (zip_to_num >= vstup_num)]
                         else:
-                            vstup_str = str(vstup_psc).upper()
-                            match = df[(df[3].astype(str).str.upper() <= vstup_str) & (df[4].astype(str).str.upper() >= vstup_str)]
+                            vstup_str = str(vstup_psc).upper(); match = df[(df[3].astype(str).str.upper() <= vstup_str) & (df[4].astype(str).str.upper() >= vstup_str)]
 
                         if not match.empty:
                             kody = match[5].dropna().unique()
@@ -164,54 +140,46 @@ else:
                             for idx, k in enumerate(kody):
                                 k_str = str(int(float(str(k).strip())))
                                 nazev = mapovani_sluzeb.get(k_str, f"Kód {k_str}")
-                                with cols[idx % 4]:
-                                    st.info(f"**{nazev}**")
+                                with cols[idx % 4]: st.info(f"**{nazev}**")
                         else:
                             st.warning(f"⚠️ Pro PSČ {vstup_psc} v zemi {vybrany_stat[1]} nebyla nalezena žádná specifická pravidla.")
-                        
-                        with st.expander("Zobrazit data ze souboru (pro kontrolu)"):
-                            st.dataframe(match.head(15))
+                    except Exception as e: st.error(f"Chyba při zpracování: {e}")
 
-                    except Exception as e:
-                        st.error(f"Chyba při zpracování: {e}")
-            else:
-                st.error(f"Soubor pro směr CZ -> {vybrany_stat[0]} nebyl nalezen.")
+    # --- SEKCE 2 + 3: FILTR A KARTY (V EXPANDERU) ---
+    with st.expander("🌍 2. Přehled států a služeb", expanded=False):
+        search_query = st.text_input("Rychlé hledání v seznamu (napiš název státu):")
+        
+        filtr_klicu = []
+        for klic, soubor in seznam_souboru.items():
+            kod_zeme = klic.split('_')[1]; nazev_zeme = nazvy_statu.get(kod_zeme, kod_zeme)
+            if search_query.lower() in nazev_zeme.lower() or search_query.upper() in kod_zeme:
+                filtr_klicu.append((klic, soubor, nazev_zeme))
+        
+        # Abecední řazení výsledků pro karty
+        filtr_klicu = sorted(filtr_klicu, key=lambda x: x[2])
 
-    st.markdown("---")
+        if filtr_klicu:
+            vysledky_karty = []
+            with st.status("Načítám přehled...", expanded=False) as status:
+                for idx, (klic, soubor, nazev) in enumerate(filtr_klicu):
+                    df_karta = nacti_df(soubor)
+                    if df_karta is not None:
+                        kody = df_karta[5].dropna().unique()
+                        sluzby = sorted(list(set([mapovani_sluzeb.get(str(int(float(str(k).strip()))), f"Kód {k}") for k in kody if str(k).strip().replace('.','').isdigit()])))
+                        vysledky_karty.append({"stat": nazev, "sluzby": sluzby})
+                status.update(label="Načteno!", state="complete")
 
-    # --- SEKCE 2 + 3: FILTR A KARTY ---
-    st.header("📋 2. Filtr a 🌍 3. Přehled států")
-    search_query = st.text_input("Napiš název státu pro odfiltrování karet:")
-    
-    filtr_klicu = []
-    for klic, soubor in seznam_souboru.items():
-        kod_zeme = klic.split('_')[1]
-        nazev_zeme = nazvy_statu.get(kod_zeme, kod_zeme)
-        if search_query.lower() in nazev_zeme.lower() or search_query.upper() in kod_zeme:
-            filtr_klicu.append((klic, soubor, nazev_zeme))
-
-    if filtr_klicu:
-        vysledky_karty = []
-        with st.status("Načítám přehled států...", expanded=False) as status:
-            for idx, (klic, soubor, nazev) in enumerate(filtr_klicu):
-                df_karta = nacti_df(soubor)
-                if df_karta is not None:
-                    kody = df_karta[5].dropna().unique()
-                    sluzby = sorted(list(set([mapovani_sluzeb.get(str(int(float(str(k).strip()))), f"Kód {k}") for k in kody if str(k).strip().replace('.','').isdigit()])))
-                    vysledky_karty.append({"stat": nazev, "soubor": soubor, "sluzby": sluzby})
-            status.update(label="Načteno!", state="complete")
-
-        for i in range(0, len(vysledky_karty), 4):
-            cols = st.columns(4)
-            for j in range(4):
-                if i + j < len(vysledky_karty):
-                    item = vysledky_karty[i+j]
-                    with cols[j]:
-                        with st.container(border=True):
-                            st.subheader(f"{item['stat']}")
-                            for s in item['sluzby']:
-                                if "COD" in s: st.write(f"💰 **{s}**")
-                                else: st.write(f"🔹 {s}")
+            for i in range(0, len(vysledky_karty), 4):
+                cols = st.columns(4)
+                for j in range(4):
+                    if i + j < len(vysledky_karty):
+                        item = vysledky_karty[i+j]
+                        with cols[j]:
+                            with st.container(border=True):
+                                st.subheader(f"{item['stat']}")
+                                for s in item['sluzby']:
+                                    if "COD" in s: st.write(f"💰 **{s}**")
+                                    else: st.write(f"🔹 {s}")
 
 if st.sidebar.button('🔄 Obnovit data z FTP'):
     st.cache_data.clear()
